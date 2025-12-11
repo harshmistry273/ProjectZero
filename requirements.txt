@@ -1,0 +1,10 @@
+# PYTHON - SPECIFIC
+python-dotenv
+pydantic-settings
+requests
+
+# VOICE
+elevenlabs
+
+# FRONTEND
+streamlit
