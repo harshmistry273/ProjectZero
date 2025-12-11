@@ -154,4 +154,3 @@ if st.button("Convert & Save"):
 
 # ------------------ Footer ------------------
 st.markdown("---")
-st.caption("After creating a voice the page refreshes so the new voice will appear in the sidebar picker (if ElevenLabs has indexed it). Use 'Refresh voices' if needed.")
