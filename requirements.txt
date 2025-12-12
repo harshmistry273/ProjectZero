@@ -1,5 +1,6 @@
 # PYTHON - SPECIFIC
 python-dotenv
+pydub
 pydantic-settings
 requests
 

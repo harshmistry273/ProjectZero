@@ -45,7 +45,7 @@ class ElevenLabsManager:
 
     # SAVE IN DIR
     @classmethod
-    def convert_and_save_text_to_speech(cls, text: str, voice_id: str = "ZF6FPAbjXT4488VcRRnw") -> str:
+    def convert_and_save_text_to_speech(cls, text: str, out_dir:str, voice_id: str = "ZF6FPAbjXT4488VcRRnw") -> str:
         try:
             logger.info(f"Converting text to speech for text: {text}")
             audio = cls.client.text_to_speech.convert(
@@ -67,8 +67,8 @@ class ElevenLabsManager:
 
         try:
             logger.info("Creating file name")
-            os.makedirs("outputs/ivc", exist_ok=True)
-            file_path = f"outputs/ivc/{uuid.uuid4()}.mp3"
+            # os.makedirs("outputs/ivc", exist_ok=True)
+            file_path = f"{out_dir}/{uuid.uuid4()}.mp3"
             
             with open(file_path, "wb") as f:
                 for chunk in audio:
