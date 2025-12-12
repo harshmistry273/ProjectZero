@@ -308,6 +308,4 @@ with gen_cols[3]:
                 st.write(f"- {f}")
 
 st.markdown("---")
-st.caption("Notes: This app calls ElevenLabsManager.convert_and_save_text_to_speech() for every segment. "
-           "Uploading a single sample in the sidebar will create one cloned voice from that sample. "
-           "Merging requires pydub + ffmpeg; otherwise the app provides a ZIP of the MP3 segments.")
+
