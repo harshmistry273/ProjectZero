@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: str
     ELEVENLABS_MODEL: str
     ELEVENLABS_LIST_VOICES_URL: str
+    SUPABASE_URL: str
+    SUPABASE_ANON: str
     
     model_config = SettingsConfigDict(
         env_file=".env",

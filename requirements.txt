@@ -9,3 +9,6 @@ elevenlabs
 
 # FRONTEND
 streamlit
+
+# DATABASE
+supabase
