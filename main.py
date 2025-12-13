@@ -1,5 +1,6 @@
 """
 Simplified Multi-Speaker TTS Streamlit App with Supabase Authentication and Usage Limits
+Complete working version with Admin role support
 """
 
 import streamlit as st
@@ -32,9 +33,12 @@ OUTPUTS_DIR = pathlib.Path("outputs/tts")
 SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Usage limits
+# Usage limits (for regular users)
 MAX_VOICES_PER_USER = 1
 MAX_GENERATIONS_PER_USER = 5
+
+# Admin role
+ADMIN_ROLE = "admin"
 
 st.set_page_config(page_title="Multi-Speaker TTS", layout="wide", initial_sidebar_state="expanded")
 
@@ -54,6 +58,44 @@ def get_supabase_client() -> Optional[Client]:
     except Exception as e:
         st.error(f"Failed to connect to Supabase: {e}")
         return None
+
+# ============================================================================
+# ADMIN FUNCTIONS
+# ============================================================================
+
+def is_admin(user_id: str) -> bool:
+    """Check if user has admin role"""
+    if not user_id:
+        return False
+    
+    # Cache admin status in session state for performance
+    cache_key = f"is_admin_{user_id}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    
+    supabase = get_supabase_client()
+    if not supabase:
+        st.session_state[cache_key] = False
+        return False
+    
+    try:
+        response = supabase.table("user_roles").select("role").eq("user_id", user_id).execute()
+        is_admin_user = False
+        if response.data and len(response.data) > 0:
+            is_admin_user = response.data[0].get("role") == ADMIN_ROLE
+        
+        st.session_state[cache_key] = is_admin_user
+        return is_admin_user
+    except Exception as e:
+        st.warning(f"Error checking admin status: {e}")
+        st.session_state[cache_key] = False
+        return False
+
+def get_user_limits(user_id: str) -> tuple[int, int]:
+    """Get voice and generation limits for user. Returns (voice_limit, generation_limit)"""
+    if is_admin(user_id):
+        return (999999, 999999)  # Unlimited for admins
+    return (MAX_VOICES_PER_USER, MAX_GENERATIONS_PER_USER)
 
 # ============================================================================
 # DATABASE FUNCTIONS FOR USER VOICES
@@ -78,10 +120,13 @@ def save_user_voice(user_id: str, voice_id: str, voice_name: str) -> bool:
     if not supabase:
         return False
     
+    # Get user limits
+    max_voices, _ = get_user_limits(user_id)
+    
     # Check if user has reached voice limit
     voice_count = get_user_voice_count(user_id)
-    if voice_count >= MAX_VOICES_PER_USER:
-        st.error(f"❌ You can only create {MAX_VOICES_PER_USER} voice. Delete your existing voice to create a new one.")
+    if voice_count >= max_voices:
+        st.error(f"❌ You can only create {max_voices} voice(s). Delete an existing voice to create a new one.")
         return False
     
     try:
@@ -254,6 +299,11 @@ def logout_user():
         except:
             pass
     
+    # Clear all session state including admin cache
+    for key in list(st.session_state.keys()):
+        if key.startswith("is_admin_"):
+            del st.session_state[key]
+    
     st.session_state.authenticated = False
     st.session_state.user = None
     st.session_state.segments = [create_new_segment()]
@@ -389,10 +439,13 @@ def handle_voice_cloning(uploaded_file, voice_name: str):
     """Handle the voice cloning process"""
     user_id = st.session_state.user.get("id")
     
+    # Get user limits
+    max_voices, _ = get_user_limits(user_id)
+    
     # Check voice limit
     voice_count = get_user_voice_count(user_id)
-    if voice_count >= MAX_VOICES_PER_USER:
-        st.error(f"❌ You can only create {MAX_VOICES_PER_USER} voice. Delete your existing voice to create a new one.")
+    if voice_count >= max_voices and not is_admin(user_id):
+        st.error(f"❌ You can only create {max_voices} voice(s). Delete an existing voice to create a new one.")
         return False
     
     # Save uploaded file
@@ -447,11 +500,16 @@ def validate_segments() -> List[int]:
 
 def check_generation_limit(user_id: str, num_segments: int) -> bool:
     """Check if user has remaining generations"""
+    _, max_generations = get_user_limits(user_id)
     current_count = get_user_generation_count(user_id)
-    remaining = MAX_GENERATIONS_PER_USER - current_count
+    remaining = max_generations - current_count
+    
+    # Admins have unlimited
+    if is_admin(user_id):
+        return True
     
     if remaining <= 0:
-        st.error(f"❌ You've reached your limit of {MAX_GENERATIONS_PER_USER} generations.")
+        st.error(f"❌ You've reached your limit of {max_generations} generations.")
         return False
     
     if num_segments > remaining:
@@ -565,29 +623,39 @@ def render_usage_info():
     with st.sidebar:
         user_id = st.session_state.user.get("id")
         
+        # Check if admin
+        if is_admin(user_id):
+            st.markdown("### 👑 Admin Account")
+            st.success("✓ Unlimited voices and generations")
+            st.divider()
+            return
+        
+        # Get user limits
+        max_voices, max_generations = get_user_limits(user_id)
+        
         # Voice usage
         voice_count = get_user_voice_count(user_id)
-        voice_remaining = MAX_VOICES_PER_USER - voice_count
+        voice_remaining = max_voices - voice_count
         
         # Generation usage
         gen_count = get_user_generation_count(user_id)
-        gen_remaining = MAX_GENERATIONS_PER_USER - gen_count
+        gen_remaining = max_generations - gen_count
         
         st.markdown("### 📊 Usage")
         
         # Voice quota
-        st.markdown(f"**Voices:** {voice_count} / {MAX_VOICES_PER_USER}")
-        st.progress(voice_count / MAX_VOICES_PER_USER)
+        st.markdown(f"**Voices:** {voice_count} / {max_voices}")
+        st.progress(min(voice_count / max_voices, 1.0))
         if voice_remaining > 0:
-            st.caption(f"✓ {voice_remaining} voice slot available")
+            st.caption(f"✓ {voice_remaining} voice slot(s) available")
         else:
             st.caption("⚠️ Voice limit reached")
         
         st.markdown("---")
         
         # Generation quota
-        st.markdown(f"**Generations:** {gen_count} / {MAX_GENERATIONS_PER_USER}")
-        st.progress(gen_count / MAX_GENERATIONS_PER_USER)
+        st.markdown(f"**Generations:** {gen_count} / {max_generations}")
+        st.progress(min(gen_count / max_generations, 1.0))
         if gen_remaining > 0:
             st.caption(f"✓ {gen_remaining} generation(s) remaining")
         else:
@@ -600,8 +668,24 @@ def render_user_info():
     with st.sidebar:
         st.divider()
         user_email = st.session_state.user.get("email", "User")
+        user_id = st.session_state.user.get("id", "")
+        
         st.caption(f"👤 Logged in as:")
         st.text(user_email)
+        
+        # Debug: Show admin status
+        if is_admin(user_id):
+            st.caption("🔑 Role: Admin")
+        else:
+            st.caption("🔑 Role: User")
+        
+        # Button to refresh admin status
+        if st.button("🔄 Refresh Status", use_container_width=True, key="refresh_admin_status"):
+            # Clear admin cache
+            cache_key = f"is_admin_{user_id}"
+            if cache_key in st.session_state:
+                del st.session_state[cache_key]
+            st.rerun()
         
         if st.button("🚪 Logout", use_container_width=True):
             logout_user()
@@ -721,32 +805,40 @@ def render_sidebar_editor():
         st.header("🎙️ Voice Cloning")
         
         user_id = st.session_state.user.get("id")
+        max_voices, _ = get_user_limits(user_id)
         voice_count = get_user_voice_count(user_id)
         
-        if voice_count >= MAX_VOICES_PER_USER:
-            st.warning(f"⚠️ You've reached the limit of {MAX_VOICES_PER_USER} voice. Delete your existing voice to create a new one.")
-        else:
-            st.caption("Upload ONE audio file (MP3/WAV)")
-            
-            uploaded_files = st.file_uploader(
-                "Audio file",
-                type=["mp3", "wav"],
-                accept_multiple_files=True,
-                key="voice_upload"
-            )
-            
-            voice_name = st.text_input("Voice name (required)", key="voice_name")
-            
-            if st.button("Create Cloned Voice", use_container_width=True):
-                if not voice_name or not voice_name.strip():
-                    st.error("Please enter a voice name")
-                elif not uploaded_files:
-                    st.error("Please upload an audio file")
-                elif len(uploaded_files) > 1:
-                    st.error("❌ Only ONE file allowed")
-                else:
-                    if handle_voice_cloning(uploaded_files[0], voice_name):
-                        st.rerun()
+        # Show different message for admins
+        if is_admin(user_id):
+            st.info("👑 Admin: Unlimited voice cloning")
+        elif voice_count >= max_voices:
+            st.warning(f"⚠️ You've reached the limit of {max_voices} voice(s). Delete an existing voice to create a new one.")
+        
+        # Always show upload form
+        st.caption("Upload ONE audio file (MP3/WAV)")
+        
+        uploaded_files = st.file_uploader(
+            "Audio file",
+            type=["mp3", "wav"],
+            accept_multiple_files=True,
+            key="voice_upload"
+        )
+        
+        voice_name = st.text_input("Voice name (required)", key="voice_name")
+        
+        # Disable button only for non-admins who hit the limit
+        button_disabled = (voice_count >= max_voices and not is_admin(user_id))
+        
+        if st.button("Create Cloned Voice", use_container_width=True, disabled=button_disabled):
+            if not voice_name or not voice_name.strip():
+                st.error("Please enter a voice name")
+            elif not uploaded_files:
+                st.error("Please upload an audio file")
+            elif len(uploaded_files) > 1:
+                st.error("❌ Only ONE file allowed")
+            else:
+                if handle_voice_cloning(uploaded_files[0], voice_name):
+                    st.rerun()
         
         st.divider()
         
@@ -817,19 +909,38 @@ def render_generation_controls():
     
     num_segments = len(st.session_state.segments)
     user_id = st.session_state.user.get("id")
-    gen_remaining = MAX_GENERATIONS_PER_USER - get_user_generation_count(user_id)
     
-    if gen_remaining <= 0:
-        st.error(f"❌ You've used all {MAX_GENERATIONS_PER_USER} generations.")
-        return
+    # Check if admin - direct database query for reliability
+    supabase = get_supabase_client()
+    user_is_admin = False
     
-    st.info(f"💡 You have {gen_remaining} generation(s) remaining. Each segment counts as one generation.")
+    if supabase and user_id:
+        try:
+            response = supabase.table("user_roles").select("role").eq("user_id", user_id).execute()
+            if response.data and len(response.data) > 0:
+                user_is_admin = response.data[0].get("role") == ADMIN_ROLE
+        except:
+            pass
+    
+    # Show appropriate message based on role
+    if user_is_admin:
+        st.success("👑 Admin: Unlimited generations available")
+        gen_remaining = 999999
+    else:
+        _, max_generations = get_user_limits(user_id)
+        gen_remaining = max_generations - get_user_generation_count(user_id)
+        
+        if gen_remaining <= 0:
+            st.error(f"❌ You've used all {max_generations} generations.")
+            return
+        
+        st.info(f"💡 You have {gen_remaining} generation(s) remaining. Each segment counts as one generation.")
     
     col1, col2, col3 = st.columns(3)
     
     # Button 1: Generate individual segments
     with col1:
-        btn1_disabled = num_segments < 1 or num_segments > gen_remaining
+        btn1_disabled = False if user_is_admin else (num_segments < 1 or num_segments > gen_remaining)
         if st.button("🎬 Generate Segments", use_container_width=True, disabled=btn1_disabled):
             invalid = validate_segments()
             if invalid:
@@ -846,7 +957,7 @@ def render_generation_controls():
     
     # Button 2: Generate and merge
     with col2:
-        btn2_disabled = num_segments < 2 or num_segments > gen_remaining
+        btn2_disabled = False if user_is_admin else (num_segments < 2 or num_segments > gen_remaining)
         if st.button("🔗 Generate & Merge", use_container_width=True, disabled=btn2_disabled):
             invalid = validate_segments()
             if invalid:
